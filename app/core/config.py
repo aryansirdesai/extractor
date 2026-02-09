@@ -16,6 +16,9 @@ class Settings:
     # Gemini API Key
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     
+    # OpenRouter API Key
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
+    
     # Any future settings like DB, storage, etc.
     # DATABASE_URL: str = os.getenv("DATABASE_URL")
 
