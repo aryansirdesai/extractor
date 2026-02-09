@@ -1,5 +1,6 @@
 import requests
 import json
+import re
 from typing import Dict
 from app.core.config import settings
 
@@ -28,7 +29,7 @@ class OpenRouterClient:
                 }
             ],
             "temperature": 0.0,
-            "max_tokens": 512   # 🔥 REQUIRED
+            "max_tokens": 512   
         }
 
         headers = {
@@ -54,6 +55,7 @@ class OpenRouterClient:
 
             data = response.json()
             content = data["choices"][0]["message"]["content"]
+            print("RAW LLM OUTPUT:\n", content)
 
             return self._parse_json(content)
 
@@ -88,13 +90,13 @@ OCR TEXT:
 
     def _parse_json(self, text: str) -> Dict:
         try:
-            cleaned = (
-                text.strip()
-                .replace("```json", "")
-                .replace("```", "")
-                .strip()
-            )
-            parsed = json.loads(cleaned)
+            # Extract first JSON object from text
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                raise ValueError("No JSON object found")
+
+            json_str = match.group(0)
+            parsed = json.loads(json_str)
 
             return {
                 "document_type": parsed.get("document_type", "Unknown"),
@@ -103,9 +105,8 @@ OCR TEXT:
                 "document_number": parsed.get("document_number", "MISSING"),
                 "address": parsed.get("address", "MISSING"),
             }
-
-        except Exception:
-            return self._fail(f"Invalid JSON from LLM: {text}")
+        except Exception as e:
+            return self._fail(f"Invalid JSON from LLM: {e}")
 
     def _fail(self, reason: str) -> Dict:
         return {

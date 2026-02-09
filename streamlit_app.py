@@ -48,9 +48,8 @@ if uploaded_file:
         st.error(f"Failed to call extraction API: {e}")
     else:
         data = result.get("data", {})
-        confidence = result.get("confidence", 0)
+        confidence = result.get("confidence", 0.0)
         hitl_required = result.get("hitl_required", False)
-        prompt = result.get("prompt", "")
 
         doc_type = data.get("document_type", "Unknown")
 
@@ -60,7 +59,7 @@ if uploaded_file:
 
         st.subheader("Extracted Fields")
         for key, value in data.items():
-            if not value:
+            if value in [None, "", "MISSING"]:
                 st.markdown(
                     f"{key}: <span class='missing-field'>MISSING / INVALID</span>",
                     unsafe_allow_html=True
@@ -76,16 +75,23 @@ if uploaded_file:
             )
 
             hitl_fields = {}
+
             for field in ["name", "date_of_birth", "document_number", "address"]:
-                value = data.get(field)
+                raw_value = data.get(field)
+
+                # 🔥 CRITICAL FIX:
+                # Never prefill system tokens like "MISSING"
+                prefill = "" if raw_value in [None, "", "MISSING"] else raw_value
+
                 hitl_fields[field] = st.text_input(
                     field,
-                    value="" if not value else value,
+                    value=prefill,
                     key=f"hitl_{field}"
                 )
 
             if st.button("Submit HITL Data"):
                 files = {"file": (uploaded_file.name, file_bytes)}
+
                 response = requests.post(
                     "http://127.0.0.1:8000/api/v1/documents/extract",
                     files=files,
@@ -99,9 +105,4 @@ if uploaded_file:
 
                 final_result = response.json()
                 st.success("HITL data submitted successfully! Final structured data:")
-                st.json(final_result["data"])
-
-        # ------------------- Optional Debug Prompt -------------------
-        if st.checkbox("Show raw AI prompt (debug only)"):
-            st.subheader("Prompt sent to AI")
-            st.code(prompt)
+                st.json(final_result.get("data", {}))
