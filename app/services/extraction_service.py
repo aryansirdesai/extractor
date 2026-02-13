@@ -1,3 +1,4 @@
+from typing import List, Optional
 from app.services.ocr_service import OCRService
 from app.services.openrouter_client import OpenRouterClient
 from app.services.confidence_service import ConfidenceService
@@ -13,13 +14,10 @@ class ExtractionService:
         self.doc_type_service = DocumentTypeService()
         self.id_number_service = IDNumberService()
 
-        self.required_fields_by_doc = {
-            "Aadhaar": ["name", "date_of_birth", "document_number", "address"],
-            "PAN": ["name", "date_of_birth", "document_number"],
-            "Passport": ["name", "date_of_birth", "document_number", "address"],
-        }
+    def extract_document(self, file_path: str, required_fields: Optional[List[str]] = None):
 
-    def extract_document(self, file_path: str):
+        required_fields = required_fields or []
+
         # ------------------ OCR ------------------
         ocr_result = self.ocr.extract_text(file_path)
 
@@ -32,18 +30,22 @@ class ExtractionService:
                 "fallback_reason": "low_ocr_quality"
             }
 
-        # ------------------ LLM ------------------
-        llm_result = self.llm.extract_fields(ocr_result["text"])
+        # ------------------ LLM (pass required fields) ------------------
+        llm_result = self.llm.extract_fields(
+            ocr_text=ocr_result["text"],
+            required_fields=required_fields
+        )
+
         data = self._normalize_fields(llm_result)
 
-        # ------------------ Phase 4.1: Doc Type ------------------
+        # ------------------ Document Type ------------------
         doc_type = self.doc_type_service.infer(
             ocr_text=ocr_result["text"],
             llm_doc_type=data.get("document_type")
         )
         data["document_type"] = doc_type
 
-        # ------------------ Phase 4.2: ID Number ------------------
+        # ------------------ ID Number Rule Override ------------------
         ocr_id_number = self.id_number_service.extract(
             ocr_text=ocr_result["text"],
             document_type=doc_type
@@ -53,14 +55,13 @@ class ExtractionService:
             data["document_number"] = ocr_id_number
 
         # ------------------ Confidence ------------------
-        required_fields = self.required_fields_by_doc.get(doc_type, [])
-
         confidence = self.conf_service.calculate_confidence(
             data,
             required_fields,
             ocr_result=ocr_result
         )
 
+        # ------------------ HITL Decision ------------------
         hitl_required, fallback_reason = self.determine_hitl(
             data=data,
             confidence=confidence,
@@ -75,9 +76,10 @@ class ExtractionService:
             "fallback_reason": fallback_reason
         }
 
-    # ------------------ helpers ------------------
+    # ------------------ HITL Logic ------------------
 
     def determine_hitl(self, data, confidence, required_fields):
+
         if not required_fields:
             return False, None
 
@@ -86,16 +88,21 @@ class ExtractionService:
             if data.get(field) in [None, "", "MISSING"]
         ]
 
+        # If ALL required fields missing → OCR likely failed
         if len(missing_fields) == len(required_fields):
             return False, "low_ocr_quality"
 
+        # Partial missing → ask human
         if missing_fields:
             return True, "partial_fields"
 
+        # Low confidence → ask human
         if not self.conf_service.is_confident(confidence):
             return True, "low_confidence"
 
         return False, None
+
+    # ------------------ Normalization ------------------
 
     def _normalize_fields(self, data):
         return {

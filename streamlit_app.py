@@ -19,9 +19,22 @@ body { background-color: #f0f8ff; color: #333; font-family: 'Segoe UI', sans-ser
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------- Title -------------------
 st.title("📄 AI Document Extractor")
 st.subheader("Upload Aadhaar, PAN, Passport or any ID document")
+
+# ------------------- Required Fields Selection -------------------
+available_fields = [
+    "name",
+    "date_of_birth",
+    "document_number",
+    "address",
+]
+
+selected_fields = st.multiselect(
+    "Select required fields:",
+    available_fields,
+    default=available_fields
+)
 
 # ------------------- File Upload -------------------
 uploaded_file = st.file_uploader(
@@ -29,23 +42,28 @@ uploaded_file = st.file_uploader(
     type=["jpg", "jpeg", "png"]
 )
 
-if uploaded_file:
-    # Show image preview
+if uploaded_file and selected_fields:
+
     image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Document", width=600)
 
     st.info("Processing document... please wait")
     file_bytes = uploaded_file.getvalue()
 
-    # ------------------- Call backend API -------------------
     try:
         response = requests.post(
             "http://127.0.0.1:8000/api/v1/documents/extract",
-            files={"file": (uploaded_file.name, file_bytes)}
+            files={"file": (uploaded_file.name, file_bytes)},
+            data={
+                "required_fields": ",".join(selected_fields)
+            }
         )
+
         result = response.json()
+
     except Exception as e:
         st.error(f"Failed to call extraction API: {e}")
+
     else:
         data = result.get("data", {})
         confidence = result.get("confidence", 0.0)
@@ -53,12 +71,13 @@ if uploaded_file:
 
         doc_type = data.get("document_type", "Unknown")
 
-        # ------------------- Display document info -------------------
         st.success(f"Document Type: {doc_type}")
         st.info(f"Confidence: {confidence:.2f} | HITL Required: {hitl_required}")
 
         st.subheader("Extracted Fields")
-        for key, value in data.items():
+
+        for key in selected_fields:
+            value = data.get(key)
             if value in [None, "", "MISSING"]:
                 st.markdown(
                     f"{key}: <span class='missing-field'>MISSING / INVALID</span>",
@@ -67,20 +86,16 @@ if uploaded_file:
             else:
                 st.markdown(f"{key}: {value}")
 
-        # ------------------- HITL Section (ONLY if required) -------------------
+        # ------------------- HITL Section -------------------
         if hitl_required:
             st.warning(
-                "Some required fields are missing or document type is unknown. "
-                "Please provide the correct information:"
+                "Some required fields are missing. Please provide correct values:"
             )
 
             hitl_fields = {}
 
-            for field in ["name", "date_of_birth", "document_number", "address"]:
+            for field in selected_fields:
                 raw_value = data.get(field)
-
-                # 🔥 CRITICAL FIX:
-                # Never prefill system tokens like "MISSING"
                 prefill = "" if raw_value in [None, "", "MISSING"] else raw_value
 
                 hitl_fields[field] = st.text_input(
@@ -90,19 +105,17 @@ if uploaded_file:
                 )
 
             if st.button("Submit HITL Data"):
-                files = {"file": (uploaded_file.name, file_bytes)}
 
                 response = requests.post(
                     "http://127.0.0.1:8000/api/v1/documents/extract",
-                    files=files,
+                    files={"file": (uploaded_file.name, file_bytes)},
                     data={
-                        "hitl_name": hitl_fields["name"],
-                        "hitl_date_of_birth": hitl_fields["date_of_birth"],
-                        "hitl_document_number": hitl_fields["document_number"],
-                        "hitl_address": hitl_fields["address"],
+                        "required_fields": ",".join(selected_fields),
+                        **{f"hitl_{k}": v for k, v in hitl_fields.items()}
                     }
                 )
 
                 final_result = response.json()
-                st.success("HITL data submitted successfully! Final structured data:")
+
+                st.success("HITL data submitted successfully!")
                 st.json(final_result.get("data", {}))

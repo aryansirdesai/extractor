@@ -1,7 +1,7 @@
 import requests
 import json
 import re
-from typing import Dict
+from typing import Dict, List, Optional
 from app.core.config import settings
 
 
@@ -15,7 +15,12 @@ class OpenRouterClient:
         self.api_key = settings.OPENROUTER_API_KEY
         self.model = "qwen/qwen-2.5-7b-instruct"
 
-    def extract_fields(self, ocr_text: str) -> Dict:
+    # ------------------ MAIN METHOD ------------------
+
+    def extract_fields(self, ocr_text: str, required_fields: Optional[List[str]] = None) -> Dict:
+
+        required_fields = required_fields or []
+
         payload = {
             "model": self.model,
             "messages": [
@@ -25,11 +30,11 @@ class OpenRouterClient:
                 },
                 {
                     "role": "user",
-                    "content": self._build_prompt(ocr_text)
+                    "content": self._build_prompt(ocr_text, required_fields)
                 }
             ],
             "temperature": 0.0,
-            "max_tokens": 512   
+            "max_tokens": 512
         }
 
         headers = {
@@ -62,35 +67,40 @@ class OpenRouterClient:
         except Exception as e:
             return self._fail(str(e))
 
-    # ------------------ helpers ------------------
+    # ------------------ PROMPT BUILDER ------------------
 
-    def _build_prompt(self, text: str) -> str:
+    def _build_prompt(self, text: str, required_fields: List[str]) -> str:
+
+        # Always include document_type
+        fields_to_extract = ["document_type"] + required_fields
+
+        formatted_fields = "\n".join([f"  - {field}" for field in fields_to_extract])
+
         return f"""
 You are given raw OCR text extracted from an Indian identity document.
 
 The OCR text may contain noise, spelling mistakes, or missing lines.
 
 Your task:
-- Identify the document type (Aadhaar, PAN, Passport, or Unknown)
-- Extract:
-  - name
-  - date_of_birth
-  - document_number
-  - address
+Extract the following fields:
+{formatted_fields}
 
 Rules:
-- If missing or unreadable → "MISSING"
+- If a field is missing or unreadable → "MISSING"
 - Do NOT guess
 - Output VALID JSON ONLY
-- No markdown, no explanation
+- No markdown
+- No explanation
+- Only JSON
 
 OCR TEXT:
 {text}
 """
 
+    # ------------------ JSON PARSER ------------------
+
     def _parse_json(self, text: str) -> Dict:
         try:
-            # Extract first JSON object from text
             match = re.search(r"\{[\s\S]*\}", text)
             if not match:
                 raise ValueError("No JSON object found")
@@ -105,8 +115,11 @@ OCR TEXT:
                 "document_number": parsed.get("document_number", "MISSING"),
                 "address": parsed.get("address", "MISSING"),
             }
+
         except Exception as e:
             return self._fail(f"Invalid JSON from LLM: {e}")
+
+    # ------------------ FAIL SAFE ------------------
 
     def _fail(self, reason: str) -> Dict:
         return {
