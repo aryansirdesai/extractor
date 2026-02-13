@@ -40,23 +40,20 @@ async def extract_document(
                 if value:
                     result["data"][key] = value
 
-            # 🔥 CRITICAL FIX:
-            # Re-infer document type AFTER HITL (never trust old type)
-            result["data"]["document_type"] = extraction_service.infer_document_type(
-                result["data"]
-            )
-
-            doc_type = result["data"]["document_type"]
+            # Recalculate confidence using updated data
+            doc_type = result["data"].get("document_type", "Unknown")
             required_fields = extraction_service.required_fields_by_doc.get(doc_type, [])
 
-            # Recompute confidence
             confidence = extraction_service.conf_service.calculate_confidence(
-                result["data"], required_fields
+                result["data"],
+                required_fields,
+                {"status": "ok"}  # minimal safe OCR placeholder
             )
 
-            # Recompute HITL
-            hitl_required = extraction_service.determine_hitl(
-                result["data"], confidence, required_fields
+            hitl_required, _ = extraction_service.determine_hitl(
+                result["data"],
+                confidence,
+                required_fields
             )
 
             result["confidence"] = confidence
